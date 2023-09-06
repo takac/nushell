@@ -86,6 +86,7 @@ mod select;
 mod semicolon;
 mod seq;
 mod seq_char;
+mod shuffle;
 mod skip;
 mod sort;
 mod sort_by;

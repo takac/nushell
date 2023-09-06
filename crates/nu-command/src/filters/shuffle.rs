@@ -1,7 +1,8 @@
 use nu_protocol::ast::Call;
 use nu_protocol::engine::{Command, EngineState, Stack};
 use nu_protocol::{
-    Category, Example, IntoInterruptiblePipelineData, PipelineData, ShellError, Signature, Type,
+    Category, Example, IntoInterruptiblePipelineData, IntoPipelineData, PipelineData, ShellError,
+    Signature, Type, Value,
 };
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
@@ -16,10 +17,13 @@ impl Command for Shuffle {
 
     fn signature(&self) -> nu_protocol::Signature {
         Signature::build("shuffle")
-            .input_output_types(vec![(
-                Type::List(Box::new(Type::Any)),
-                Type::List(Box::new(Type::Any)),
-            )])
+            .input_output_types(vec![
+                (
+                    Type::List(Box::new(Type::Any)),
+                    Type::List(Box::new(Type::Any)),
+                ),
+                (Type::Record(vec![]), Type::Record(vec![])),
+            ])
             .category(Category::Filters)
     }
 
@@ -35,12 +39,31 @@ impl Command for Shuffle {
         input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
         let metadata = input.metadata();
-        let mut v: Vec<_> = input.into_iter_strict(call.head)?.collect();
-        v.shuffle(&mut thread_rng());
-        let iter = v.into_iter();
-        Ok(iter
-            .into_pipeline_data(engine_state.ctrlc.clone())
-            .set_metadata(metadata))
+        let span = input.span().unwrap_or(call.head);
+
+        match input {
+            // Records have two sorting methods, toggled by presence or absence of -v
+            PipelineData::Value(Value::Record { val, .. }, ..) => {
+                let mut input_pairs: Vec<(String, Value)> = val.into_iter().collect();
+                let mut thread_rng = rand::thread_rng();
+                input_pairs.shuffle(&mut thread_rng);
+                let record = Value::record(input_pairs.into_iter().collect(), span);
+                Ok(record.into_pipeline_data())
+            }
+            PipelineData::Value(v, ..)
+                if !matches!(v, Value::List { .. } | Value::Range { .. }) =>
+            {
+                Ok(v.into_pipeline_data())
+            }
+            pipe_data => {
+                let mut v: Vec<_> = pipe_data.into_iter().collect();
+                v.shuffle(&mut thread_rng());
+                let iter = v.into_iter();
+                Ok(iter
+                    .into_pipeline_data(engine_state.ctrlc.clone())
+                    .set_metadata(metadata))
+            }
+        }
     }
 
     fn examples(&self) -> Vec<Example> {
